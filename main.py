@@ -1,115 +1,83 @@
-import os
 import json
 from telegram import Update, ChatMember
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
 )
 
-# Kanal username (link uchun ishlatiladi)
-CHANNEL_USERNAME = '@AlTarjimonUz_Bot'
-CHANNEL_LINK = 'https://t.me/AlTarjimonUz_Bot'
+# 🎯 O'ZGARTIRING: Bu yerga sizning bot tokeningiz
+BOT_TOKEN = "8163580969:AAG3HoJAXJH9OeQQ79b51qPtQO75KHTZBZY"
 
-# Kino bazasi
-DATA_FILE = 'data.json'
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, 'r', encoding='utf-8') as f:
-        db = json.load(f)
-else:
-    db = {}
+# 🎯 O'ZGARTIRING: Bu yerga sizning kanal username'ingiz
+CHANNEL_USERNAME = "@AlTarjimonUz_Bot"
 
-def save_db():
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
+# Har bir foydalanuvchi uchun holatni eslab qolish
+user_states = {}
 
-# Obuna tekshiruv
-async def is_subscribed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    try:
-        user_id = update.effective_user.id
-        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status not in [ChatMember.LEFT, ChatMember.KICKED]
-    except:
-        return False
+# JSON ma'lumotlarni o'qish
+def load_db():
+    with open("data.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# JSON ma'lumotlarni yozish
+def save_db(db):
+    with open("data.json", "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=4, ensure_ascii=False)
 
 # /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not await is_subscribed(update, context):
-        await update.message.reply_text(
-            "❌ Kechirasiz, kinoni ko‘rishdan oldin quyidagi kanallarga obuna bo‘ling:\n"
-            f"[➕]({CHANNEL_LINK})",
-            parse_mode="Markdown"
-        )
-        return
+    user_states[user.id] = {"subscribed": False}
     await update.message.reply_text(
-        f"Assalomu alaykum, {user.full_name}!\nKinoning kodini kiriting:"
+        f"Assalomu alaykum, @{user.username}!\n"
+        "Xush kelibsiz! Iltimos, kino kodini kiriting."
     )
 
-# /add BZ01 | Kino nomi | Janr
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_subscribed(update, context):
-        await update.message.reply_text(
-            "❌ Kechirasiz, kinoni qo‘shishdan oldin kanalga obuna bo‘ling:\n"
-            f"[➕]({CHANNEL_LINK})",
-            parse_mode="Markdown"
-        )
-        return
+# Kanalga obuna bo‘lganmi - tekshiruv
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
+    return member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.CREATOR]
 
-    text = update.message.text[len('/add '):].strip()
-    parts = [p.strip() for p in text.split('|')]
-    if len(parts) != 3:
-        await update.message.reply_text("❗ Format xato!\nTo‘g‘ri format:\n/add BZ01 | Kino nomi | Janr")
-        return
-
-    code, name, genre = parts
-    code = code.upper()
-    db[code] = {
-        "name": name,
-        "genre": genre,
-        "views": 0
-    }
-    save_db()
-    await update.message.reply_text(f"✅ Qo‘shildi:\n🔑 {code}\n🎬 {name}\n🎭 {genre}")
-
-# Kodni qabul qilish
+# Kodlar va kino yuborish funksiyasi
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_subscribed(update, context):
-        await update.message.reply_text(
-            "❌ Kechirasiz, kinoni ko‘rishdan oldin quyidagi kanallarga obuna bo‘ling:\n"
-            f"[➕]({CHANNEL_LINK})",
-            parse_mode="Markdown"
-        )
-        return
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
 
-    code = update.message.text.strip().upper()
+    # 1. Obuna holatini tekshiramiz
+    if user_id not in user_states or not user_states[user_id]["subscribed"]:
+        subscribed = await check_subscription(update, context)
+        if not subscribed:
+            await update.message.reply_text(
+                "❗ Uzr, kinoni ko‘rishdan oldin kanalimizga obuna bo‘ling:\n➕ @AlTarjimonUz_Bot"
+            )
+            return
+        else:
+            user_states[user_id] = {"subscribed": True}
+            await update.message.reply_text(
+                "✅ Obuna tasdiqlandi. Endi kino kodini qayta yuboring."
+            )
+            return
+
+    # 2. Kodni tekshirib, ma'lumotni yuboramiz
+    db = load_db()
+    code = text.upper()  # BZ01, BZ02 holatda bo'ladi
     if code in db:
         db[code]["views"] += 1
-        save_db()
+        save_db(db)
         film = db[code]
         await update.message.reply_text(
-            f"🎬 Kino: {film['name']}\n"
-            f"🎭 Janr: {film['genre']}\n"
-            f"👁 Ko‘rilgan: {film['views']} marta"
+            f"🎬 Kino: {film['name']}\n🎭 Janr: {film['genre']}\n👁 Ko‘rilgan: {film['views']} marta"
         )
+        if "file_id" in film:
+            await update.message.reply_video(film["file_id"])
     else:
         await update.message.reply_text("❗ Bunday kod topilmadi.")
+    
 
 # Botni ishga tushirish
-def main():
-    BOT_TOKEN = os.getenv("BOT_TOKEN")  # Railway uchun .env orqali
-    if not BOT_TOKEN:
-        print("⚠️ BOT_TOKEN o‘rnatilmagan.")
-        return
-
+if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("add", add))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot ishga tushdi...")
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.run_polling()
-
-if __name__ == '__main__':
-    main()
