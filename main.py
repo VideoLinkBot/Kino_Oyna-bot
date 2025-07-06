@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 # 🔑 BOT TOKENNI BU YERGA QO'YING
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # ← o'zingizning token bilan almashtiring
+BOT_TOKEN = "YOUR_BOT_TOKEN"  8163580969:AAG3HoJAXJH9OeQQ79b51qPtQO75KHTZBZY
 
 # 📁 data.json fayldan kino ma'lumotlarini o'qish
 def load_db():
