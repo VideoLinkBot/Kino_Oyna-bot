@@ -1,74 +1,33 @@
-import os
 import json
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 
-# JSON file nomi
-DATA_FILE = "data.json"
+TOKEN = "BOT_TOKENINGNI_BU_YERGA_YOZ"
 
-# Kino saqlash funksiyasi
-def save_file_id(title, file_id):
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            data = json.load(f)
-    else:
-        data = {}
-
-    data[title] = file_id
-
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-# Kino olish funksiyasi
-def load_file_id(title):
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            data = json.load(f)
-        return data.get(title)
-    return None
-
-# /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.effective_user.first_name
-    await update.message.reply_text(f"Assalomu alaykum {name}, bizning botimizga xush kelibsiz!")
+    user = update.effective_user
+    full_name = user.full_name
+    await update.message.reply_text(f"Assalamu alaykum {full_name}, botimizga xush kelibsiz!\nKodni kiriting, men sizga kinoni chiqarib beraman.")
 
-# Video qabul qilish
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    video = update.message.video
-    if video:
-        title = update.message.caption or "unknown"
-        file_id = video.file_id
-        save_file_id(title, file_id)
-        await update.message.reply_text(f"✅ Kino saqlandi: {title}")
-
-# Kino yuborish
-async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
-        title = " ".join(context.args)
-        file_id = load_file_id(title)
-        if file_id:
-            await update.message.reply_video(file_id)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_input = update.message.text.strip()
+    try:
+        with open("data.json", "r", encoding="utf-8") as file:
+            data = json.load(file)
+        
+        if user_input in data:
+            file_id = data[user_input]
+            await context.bot.send_video(chat_id=update.effective_chat.id, video=file_id)
         else:
-            await update.message.reply_text("❌ Bunday nomli kino topilmadi.")
-    else:
-        await update.message.reply_text("Iltimos, kino nomini yozing. Masalan: `/kino Titanic`")
+            await update.message.reply_text("❌ Bunday kod topilmadi. Kodni to‘g‘ri kiriting.")
+    except Exception as e:
+        await update.message.reply_text(f"Xatolik yuz berdi: {e}")
 
-# Botni ishga tushirish
-async def main():
-    TOKEN = os.getenv("TOKEN")
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("kino", send_movie))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    await app.run_polling()
-
-if __name__ == "__main__":
-    import asyncio
-    try:
-        asyncio.run(main())
-    except RuntimeError:
-        import nest_asyncio
-        nest_asyncio.apply()
-        asyncio.run(main())
+    print("Bot ishga tushdi...")
+    app.run_polling()
