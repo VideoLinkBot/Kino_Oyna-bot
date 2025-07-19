@@ -1,44 +1,40 @@
 import json
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import os
-from dotenv import load_dotenv
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")  # .env fayldan tokenni oladi
-
-# Salomlashuv komandasi
+# Start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Assalomu alaykum!\nRaqam yuboring, men sizga kinoni yuboraman.")
+    await update.message.reply_text("Assalamu alaykum! Bizning botga xush kelibsiz.\nKino kodini yuboring:")
 
-# Foydalanuvchi raqam yuborganida file_id ni topib, video yuborish
+# Kino kodini tekshirish va yuborish
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text.isdigit():
-        raqam = text
-        try:
-            with open("data.json", "r", encoding="utf-8") as f:
-                data = json.load(f)
+    user_input = update.message.text.strip().lower()
 
-            if raqam in data:
-                file_id = data[raqam]
-                await update.message.reply_video(video=file_id)
-            else:
-                await update.message.reply_text("Bunday raqamdagi kino topilmadi.")
-        except Exception as e:
-            await update.message.reply_text(f"Xatolik yuz berdi: {e}")
+    with open("data.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if user_input in data:
+        file_id = data[user_input]
+        await update.message.reply_video(video=file_id)
     else:
-        await update.message.reply_text("Iltimos, faqat raqam yuboring.")
+        await update.message.reply_text("❌ Bunday kod topilmadi. Iltimos, tekshirib qayta yuboring.")
 
-# Botni ishga tushirish
-def main():
+# Asosiy bot ishga tushirish
+async def main():
+    from os import getenv
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    TOKEN = getenv("BOT_TOKEN")  # Railway werables da BOT_TOKEN deb qo'yilgan bo'lishi kerak
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Bot ishga tushdi...")
-    app.run_polling()
+    print("Bot ishlayapti...")
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
