@@ -1,33 +1,40 @@
 import json
+import os
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
+from dotenv import load_dotenv
 
-TOKEN = "BOT_TOKENINGNI_BU_YERGA_YOZ"
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
 
+# Kino bazasi
+with open("data.json", "r", encoding="utf-8") as file:
+    data = json.load(file)
+
+# /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    full_name = user.full_name
-    await update.message.reply_text(f"Assalamu alaykum {full_name}, botimizga xush kelibsiz!\nKodni kiriting, men sizga kinoni chiqarib beraman.")
+    name = update.effective_user.first_name or "Foydalanuvchi"
+    await update.message.reply_text(
+        f"👋 Assalomu alaykum {name} botimizga xush kelibsiz.\n\n✍️ Kino kodini yuboring."
+    )
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_input = update.message.text.strip()
-    try:
-        with open("data.json", "r", encoding="utf-8") as file:
-            data = json.load(file)
-        
-        if user_input in data:
-            file_id = data[user_input]
-            await context.bot.send_video(chat_id=update.effective_chat.id, video=file_id)
-        else:
-            await update.message.reply_text("❌ Bunday kod topilmadi. Kodni to‘g‘ri kiriting.")
-    except Exception as e:
-        await update.message.reply_text(f"Xatolik yuz berdi: {e}")
+# Kodni qayta ishlash
+async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
 
+    if text in data:
+        kino = data[text]
+        await update.message.reply_video(
+            video=kino["file_id"],
+            caption=f"🎬 Kino\n📛 {kino['title']}\n📺 {kino['part']} - qism"
+        )
+    else:
+        await update.message.reply_text("❌ Bunday kod topilmadi. Kodni tekshirib yuboring.")
+
+# Botni ishga tushirish
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("Bot ishga tushdi...")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code))
+    print("🤖 Bot ishga tushdi...")
     app.run_polling()
