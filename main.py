@@ -1,40 +1,74 @@
+import os
 import json
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Start komandasi
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Assalamu alaykum! Bizning botga xush kelibsiz.\nKino kodini yuboring:")
+# JSON file nomi
+DATA_FILE = "data.json"
 
-# Kino kodini tekshirish va yuborish
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_input = update.message.text.strip().lower()
-
-    with open("data.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    if user_input in data:
-        file_id = data[user_input]
-        await update.message.reply_video(video=file_id)
+# Kino saqlash funksiyasi
+def save_file_id(title, file_id):
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
     else:
-        await update.message.reply_text("❌ Bunday kod topilmadi. Iltimos, tekshirib qayta yuboring.")
+        data = {}
 
-# Asosiy bot ishga tushirish
+    data[title] = file_id
+
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# Kino olish funksiyasi
+def load_file_id(title):
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+        return data.get(title)
+    return None
+
+# /start komandasi
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.effective_user.first_name
+    await update.message.reply_text(f"Assalomu alaykum {name}, bizning botimizga xush kelibsiz!")
+
+# Video qabul qilish
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    video = update.message.video
+    if video:
+        title = update.message.caption or "unknown"
+        file_id = video.file_id
+        save_file_id(title, file_id)
+        await update.message.reply_text(f"✅ Kino saqlandi: {title}")
+
+# Kino yuborish
+async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        title = " ".join(context.args)
+        file_id = load_file_id(title)
+        if file_id:
+            await update.message.reply_video(file_id)
+        else:
+            await update.message.reply_text("❌ Bunday nomli kino topilmadi.")
+    else:
+        await update.message.reply_text("Iltimos, kino nomini yozing. Masalan: `/kino Titanic`")
+
+# Botni ishga tushirish
 async def main():
-    from os import getenv
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    TOKEN = getenv("BOT_TOKEN")  # Railway werables da BOT_TOKEN deb qo'yilgan bo'lishi kerak
-
-    app = Application.builder().token(TOKEN).build()
+    TOKEN = os.getenv("TOKEN")
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CommandHandler("kino", send_movie))
+    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
 
-    print("Bot ishlayapti...")
     await app.run_polling()
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except RuntimeError:
+        import nest_asyncio
+        nest_asyncio.apply()
+        asyncio.run(main())
