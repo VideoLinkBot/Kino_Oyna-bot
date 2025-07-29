@@ -1,34 +1,57 @@
 import logging
+import json
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-# Admin Telegram ID (sizning ID)
+# Admin Telegram ID (o'zingizning ID'ingizni kiriting)
 ADMIN_ID = 6905227976
 
-# Kino bazasi (json yoki dict, hozircha oddiy dict)
-kino_baza = {
-    "101": "https://t.me/yourchannel/123",  # misol uchun
-    "102": "https://t.me/yourchannel/124",
-}
+# Kino ma'lumotlarini saqlash uchun fayl nomi
+KINOLAR_FILE = "kinolar.json"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
-# Start komandasi
+# Kino bazasini yuklash funksiyasi
+def load_movies():
+    if os.path.exists(KINOLAR_FILE):
+        with open(KINOLAR_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+# Kino bazasini saqlash funksiyasi
+def save_movies(data):
+    with open(KINOLAR_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+# /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     if user_id == ADMIN_ID:
         keyboard = [
-            [InlineKeyboardButton("🎥 Kino qo‘shish", callback_data='add_movie')],
-            [InlineKeyboardButton("📊 Statistika", callback_data='stats')],
-            [InlineKeyboardButton("📢 Kanal", url="https://t.me/yourchannel")]
+            [InlineKeyboardButton("🎥 Kino qo‘shish", callback_data="add_movie")],
+            [InlineKeyboardButton("📊 Statistika", callback_data="stats")],
+            [InlineKeyboardButton("📢 Kanal", url="https://t.me/YOURCHANNEL")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Admin panelga xush kelibsiz:", reply_markup=reply_markup)
+        await update.message.reply_text(
+            "Admin panelga xush kelibsiz:", reply_markup=reply_markup
+        )
     else:
-        await update.message.reply_text("🎬 Kodni yuboring (masalan: 101):")
+        await update.message.reply_text("🎬 Kino kodini yuboring (masalan, 101):")
 
-# Callback tugmalar
+
+# Tugma bosilganda ishlaydigan funksiya
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -39,45 +62,61 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data == "add_movie":
-        await query.edit_message_text("Yangi kino qo‘shish uchun: `kod|link` yuboring.\n\nMasalan:\n`103|https://t.me/yourchannel/125`")
+        await query.edit_message_text(
+            "Yangi kino qo‘shish uchun `kod|link` formatida yuboring.\n\nMasalan:\n101|https://t.me/yourchannel/123"
+        )
         context.user_data["adding_movie"] = True
 
     elif query.data == "stats":
-        count = len(kino_baza)
+        movies = load_movies()
+        count = len(movies)
         await query.edit_message_text(f"📊 Bazadagi kinolar soni: {count} ta")
 
-# Kino kodi orqali kino chiqarish
+
+# Foydalanuvchilardan kelgan xabarlarni qabul qilish
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
+    movies = load_movies()
 
+    # Admin kino qo'shayotgan bo'lsa
     if user_id == ADMIN_ID and context.user_data.get("adding_movie"):
         try:
             code, link = text.split("|")
-            kino_baza[code.strip()] = link.strip()
-            await update.message.reply_text(f"✅ {code} kodi uchun kino qo‘shildi.")
-        except:
-            await update.message.reply_text("❌ Noto‘g‘ri format. `kod|link` ko‘rinishida yuboring.")
+            code = code.strip()
+            link = link.strip()
+            movies[code] = link
+            save_movies(movies)
+            await update.message.reply_text(f"✅ Kino muvaffaqiyatli qo‘shildi: {code}")
+        except Exception:
+            await update.message.reply_text(
+                "❌ Format noto‘g‘ri. Iltimos, `kod|link` ko‘rinishida yuboring."
+            )
         context.user_data["adding_movie"] = False
         return
 
-    # Oddiy foydalanuvchi uchun kod orqali kino
-    if text in kino_baza:
-        await update.message.reply_text(f"🎬 Mana siz izlagan kino:\n{kino_baza[text]}")
+    # Oddiy foydalanuvchilar uchun kino kodi bo'yicha qidirish
+    if text in movies:
+        await update.message.reply_text(f"🎬 Kino topildi:\n{movies[text]}")
     else:
-        await update.message.reply_text("❌ Bunday kod topilmadi. Tekshirib qayta urinib ko‘ring.")
+        await update.message.reply_text(
+            "❌ Bunday kod topilmadi. Iltimos, to‘g‘ri kod kiriting."
+        )
 
-# Main
-if __name__ == '__main__':
-    import os
+
+if __name__ == "__main__":
     from dotenv import load_dotenv
+
     load_dotenv()
     TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        print("ERROR: BOT_TOKEN .env faylida yo'q!")
+        exit(1)
 
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(telegram.ext.CallbackQueryHandler(button_handler))
 
     print("Bot ishga tushdi...")
     app.run_polling()
