@@ -1,88 +1,106 @@
+import os
+from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
-)
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from datetime import datetime
 
-# 🔐 BOT TOKEN — BU YERGA O'ZINGIZNING TOKENINGIZNI YOZING!
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+load_dotenv()
 
-# 🔗 Majburiy kanal username
-CHANNEL_USERNAME = "@YourChannelUsername"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# 👮‍♂️ Admin user ID ro'yxati
-ADMINS = [123456789, 987654321]  # ← o'zingizni telegram ID larini yozing
+kino_data = {
+    "100": "https://t.me/kanalingiz/1",
+    "101": "https://t.me/kanalingiz/2"
+}
 
-# /start komandasi
+user_stats = {}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # Foydalanuvchi kanalga obuna bo‘lganmi?
+    # Obuna tekshiruvi
     try:
-        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        if member.status not in ("member", "administrator", "creator"):
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status not in ("member", "creator", "administrator"):
             raise Exception("Not subscribed")
     except:
-        keyboard = [
-            [InlineKeyboardButton("🔔 Obuna bo‘lish", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")],
-            [InlineKeyboardButton("✅ Tekshirish", callback_data="check_sub")]
-        ]
-        await update.message.reply_text(
-            "👋 Iltimos, botdan foydalanish uchun kanalga obuna bo‘ling:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Obuna bo'lish", url=f"https://t.me/{str(CHANNEL_ID).replace('-100','')}")]])
+        await update.message.reply_text("❗ Botdan foydalanish uchun kanalga obuna bo‘ling.", reply_markup=btn)
         return
 
-    # Obunasi bor – adminmi yoki oddiy foydalanuvchimi tekshiramiz
-    if user_id in ADMINS:
-        keyboard = [
-            [InlineKeyboardButton("🎬 Kino qo‘shish", callback_data="add_movie")],
-            [InlineKeyboardButton("📢 Kanal qo‘shish", callback_data="add_channel")]
+    user_stats[user_id] = datetime.now().date()
+    if str(user_id) == str(ADMIN_ID):
+        btn = [
+            [InlineKeyboardButton("🎥 Kino qo‘shish", callback_data="add_movie")],
+            [InlineKeyboardButton("📊 Statistika", callback_data="stats")],
+            [InlineKeyboardButton("🗑 Kanallarni bekor qilish", callback_data="reset_channels")]
         ]
-        await update.message.reply_text(
-            "👮 Admin paneliga xush kelibsiz:", reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await update.message.reply_text("🎛 Admin paneliga xush kelibsiz!", reply_markup=InlineKeyboardMarkup(btn))
     else:
-        await update.message.reply_text(
-            "🎬 Assalomu alaykum! Iltimos kino kodini kiriting."
-        )
+        username = update.effective_user.username or "Foydalanuvchi"
+        await update.message.reply_text(f"Assalomu alaykum @{username}, botimizga xush kelibsiz!\n\n🎬 Kino kodini yuboring:")
 
-# Inline tugmalarni boshqarish
-async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    await query.answer()
-
-    if query.data == "check_sub":
-        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        if member.status in ("member", "administrator", "creator"):
-            await query.edit_message_text("✅ Obuna tasdiqlandi. Endi botdan foydalanishingiz mumkin.")
-        else:
-            await query.edit_message_text("❌ Siz hali ham kanalga obuna bo‘lmadingiz.")
-    elif query.data == "add_movie" and user_id in ADMINS:
-        await query.edit_message_text("🎬 Kino qo‘shish funksiyasi ishlamoqda (hali to‘liq emas).")
-    elif query.data == "add_channel" and user_id in ADMINS:
-        await query.edit_message_text("📢 Kanal qo‘shish funksiyasi ishlamoqda (hali to‘liq emas).")
-    else:
-        await query.edit_message_text("⛔ Sizda bu amalga ruxsat yo‘q.")
-
-# Kino kodi yoki admin xabarlari
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Kino kodini tekshirish
+async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
 
-    if user_id not in ADMINS:
-        await update.message.reply_text(f"🔍 Siz yuborgan kod: {text}\n(Kino qidirilmoqda...)")
+    # Obuna tekshiruvi
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status not in ("member", "creator", "administrator"):
+            raise Exception("Not subscribed")
+    except:
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Obuna bo'lish", url=f"https://t.me/{str(CHANNEL_ID).replace('-100','')}")]])
+        await update.message.reply_text("❗ Botdan foydalanish uchun kanalga obuna bo‘ling.", reply_markup=btn)
+        return
+
+    code = update.message.text.strip()
+    if code in kino_data:
+        await update.message.reply_text(f"✅ Mana kinongiz: {kino_data[code]}")
     else:
-        await update.message.reply_text(f"✅ Admin xabari qabul qilindi: {text}")
+        await update.message.reply_text("🚫 Bunday kodga mos kino topilmadi.")
 
-# Botni ishga tushirish
+# Admin tugmalari
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if str(user_id) != str(ADMIN_ID):
+        await query.edit_message_text("🚫 Siz admin emassiz.")
+        return
+
+    if query.data == "add_movie":
+        await query.edit_message_text("🎥 Kino qo‘shish uchun quyidagi formatda yozing:\n\n<code>kod=https://link</code>")
+    elif query.data == "stats":
+        kunlik = sum(1 for v in user_stats.values() if v == datetime.now().date())
+        await query.edit_message_text(f"📊 Bugun {kunlik} ta foydalanuvchi kirgan.")
+    elif query.data == "reset_channels":
+        await query.edit_message_text("❌ Kanal o‘zgartirish uchun `.env` faylidan CHANNEL_ID ni yangilang.")
+
+# Admin kino qo‘shadi
+async def add_kino(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if str(user_id) != str(ADMIN_ID):
+        return
+
+    if "=" in update.message.text:
+        code, link = update.message.text.split("=", 1)
+        kino_data[code.strip()] = link.strip()
+        await update.message.reply_text(f"✅ {code.strip()} kodi uchun kino qo‘shildi.")
+    else:
+        await update.message.reply_text("❗ Noto‘g‘ri format. Foydalaning: <code>kod=https://link</code>")
+
+# Asosiy bot ishlovchisi
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(callback_query_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CallbackQueryHandler(admin_callback))
+    app.add_handler(MessageHandler(filters.TEXT & filters.User(int(ADMIN_ID)) & ~filters.COMMAND, add_kino))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code))
 
     print("✅ Bot ishga tushdi!")
     app.run_polling()
