@@ -1,142 +1,121 @@
+import logging
 import json
-from telegram import Update, ReplyKeyboardMarkup
+import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
     ContextTypes,
-    ConversationHandler,
 )
 
-TOKEN = "8163580969:AAG3HoJAXJH9OeQQ79b51qPtQO75KHTZBZY"
+ADMIN_ID = 6905227976
+REQUIRED_CHANNEL = "@YOURCHANNEL"  # <-- Shu yerga kanal username'ni yozing, masalan: @kinolaruz
+KINOLAR_FILE = "kinolar.json"
 
-KANAL_NOMI, KANAL_IDSI, KINO_KODI = range(3)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
 
-asosiy_tugma = [["🎬 Kino qo‘shish", "📊 Statistika"], ["➕ Kanal qo‘shish"]]
+def load_movies():
+    if os.path.exists(KINOLAR_FILE):
+        with open(KINOLAR_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
-# Foydalanuvchi kinoni qo‘shmoqda degan belgini saqlaymiz
-KINO_FILE = "kinolar.json"
+def save_movies(data):
+    with open(KINOLAR_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
-def kanalni_saqlash(nomi, idsi):
-    try:
-        with open("data.json", "r") as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        data = {"kanallar": []}
-
-    data["kanallar"].append({"nomi": nomi, "id": idsi})
-
-    with open("data.json", "w") as f:
-        json.dump(data, f, indent=4)
-
-def kino_saqlash(kod, link):
-    try:
-        with open(KINO_FILE, "r") as f:
-            kinolar = json.load(f)
-    except FileNotFoundError:
-        kinolar = {}
-
-    kinolar[kod] = link
-
-    with open(KINO_FILE, "w") as f:
-        json.dump(kinolar, f, indent=4)
-
-def kino_soni():
-    try:
-        with open(KINO_FILE, "r") as f:
-            kinolar = json.load(f)
-        return len(kinolar)
-    except FileNotFoundError:
-        return 0
-
-# /start
+# /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Assalomu alaykum! Quyidagi tugmalardan birini tanlang:",
-        reply_markup=ReplyKeyboardMarkup(asosiy_tugma, resize_keyboard=True)
-    )
+    user_id = update.effective_user.id
 
-# Tugmalarni boshqarish
-async def tugma_bosildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    if text == "➕ Kanal qo‘shish":
-        await update.message.reply_text("Kanal nomini kiriting:")
-        return KANAL_NOMI
-
-    elif text == "🎬 Kino qo‘shish":
-        await update.message.reply_text("Kino kodini kiriting (`kod|link`):")
-        return KINO_KODI
-
-    elif text == "📊 Statistika":
-        soni = kino_soni()
-        await update.message.reply_text(f"📊 Bazada {soni} ta kino mavjud.")
-        return ConversationHandler.END
-
+    if user_id == ADMIN_ID:
+        keyboard = [
+            [InlineKeyboardButton("🎥 Kino qo‘shish", callback_data="add_movie")],
+            [InlineKeyboardButton("📊 Statistika", callback_data="stats")],
+            [InlineKeyboardButton("📢 Kanal", url=f"https://t.me/{REQUIRED_CHANNEL[1:]}")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Admin panelga xush kelibsiz:", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("Iltimos, menyudagi tugmalardan foydalaning.")
-        return ConversationHandler.END
+        await update.message.reply_text("🎬 Kino kodini yuboring (masalan, 101):")
 
-# Kanal nomi
-async def kanal_nomi_qabul(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["kanal_nomi"] = update.message.text
-    await update.message.reply_text("Endi kanal ID raqamini kiriting:")
-    return KANAL_IDSI
+# Tugma bosilganda ishlaydigan funksiya
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
 
-# Kanal ID
-async def kanal_id_qabul(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kanal_idsi = update.message.text
-    kanal_nomi = context.user_data["kanal_nomi"]
-    kanalni_saqlash(kanal_nomi, kanal_idsi)
+    if user_id != ADMIN_ID:
+        await query.edit_message_text("Sizda ruxsat yo‘q.")
+        return
 
-    await update.message.reply_text(f"✅ Kanal qo‘shildi:\n📺 {kanal_nomi} — 🆔 {kanal_idsi}")
-    return ConversationHandler.END
+    if query.data == "add_movie":
+        await query.edit_message_text(
+            "Yangi kino qo‘shish uchun `kod|link` formatida yuboring.\n\nMasalan:\n101|https://t.me/yourchannel/123"
+        )
+        context.user_data["adding_movie"] = True
 
-# Kino qo‘shish
-async def kino_qabul(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    matn = update.message.text
-    if "|" in matn:
-        kod, link = matn.split("|", 1)
-        kod = kod.strip()
-        link = link.strip()
-        kino_saqlash(kod, link)
-        await update.message.reply_text(f"✅ Kino qo‘shildi: {kod}")
+    elif query.data == "stats":
+        movies = load_movies()
+        count = len(movies)
+        await query.edit_message_text(f"📊 Bazadagi kinolar soni: {count} ta")
+
+# Kino kodi yoki admin qo‘shishi
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    movies = load_movies()
+
+    # ADMIN kino qo‘shyapti
+    if user_id == ADMIN_ID and context.user_data.get("adding_movie"):
+        try:
+            code, link = text.split("|")
+            code = code.strip()
+            link = link.strip()
+            movies[code] = link
+            save_movies(movies)
+            await update.message.reply_text(f"✅ Kino muvaffaqiyatli qo‘shildi: {code}")
+        except Exception:
+            await update.message.reply_text("❌ Format noto‘g‘ri. Iltimos, `kod|link` formatida yuboring.")
+        context.user_data["adding_movie"] = False
+        return
+
+    # ODDIY FOYDALANUVCHI KANALGA A’ZOmi?
+    if user_id != ADMIN_ID:
+        try:
+            member = await context.bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
+            if member.status in ("left", "kicked"):
+                raise Exception("Not a member")
+        except:
+            btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔔 Obuna bo‘lish", url=f"https://t.me/{REQUIRED_CHANNEL[1:]}")]])
+            await update.message.reply_text("Iltimos, kanalga obuna bo‘ling:", reply_markup=btn)
+            return
+
+    # Kino kodi bilan qidiruv
+    if text in movies:
+        await update.message.reply_text(f"🎬 Kino topildi:\n{movies[text]}")
     else:
-        await update.message.reply_text("❌ Format noto‘g‘ri. Iltimos `kod|link` tarzida kiriting.")
-    return ConversationHandler.END
+        await update.message.reply_text("❌ Bunday kod topilmadi. To‘g‘ri kiriting.")
 
-# Cancel
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bekor qilindi.")
-    return ConversationHandler.END
+# Dastur ishga tushishi
+if __name__ == "__main__":
+    from dotenv import load_dotenv
 
-# Main
-def main():
-    app = Application.builder().token(TOKEN).build()
+    load_dotenv()
+    TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        print("ERROR: BOT_TOKEN .env faylida yo'q!")
+        exit(1)
 
-    kino_conversation = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^🎬 Kino qo‘shish$"), tugma_bosildi)],
-        states={KINO_KODI: [MessageHandler(filters.TEXT & ~filters.COMMAND, kino_qabul)]},
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    kanal_conversation = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➕ Kanal qo‘shish$"), tugma_bosildi)],
-        states={
-            KANAL_NOMI: [MessageHandler(filters.TEXT & ~filters.COMMAND, kanal_nomi_qabul)],
-            KANAL_IDSI: [MessageHandler(filters.TEXT & ~filters.COMMAND, kanal_id_qabul)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(kino_conversation)
-    app.add_handler(kanal_conversation)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tugma_bosildi))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("Bot ishga tushdi...")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
