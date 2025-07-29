@@ -1,188 +1,122 @@
+import logging
 import json
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-# Majburiy obuna kanali
-REQUIRED_CHANNEL = "@SizningKanalUsername"
+# Admin Telegram ID (o'zingizning ID'ingizni kiriting)
+ADMIN_ID = 6905227976
 
-# Foydalanuvchining kanalga obuna bo‘lganligini tekshirish
-async def check_subscription(user_id, context):
-    try:
-        member = await context.bot.get_chat_member(REQUIRED_CHANNEL, user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
+# Kino ma'lumotlarini saqlash uchun fayl nomi
+KINOLAR_FILE = "kinolar.json"
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+
+# Kino bazasini yuklash funksiyasi
+def load_movies():
+    if os.path.exists(KINOLAR_FILE):
+        with open(KINOLAR_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+# Kino bazasini saqlash funksiyasi
+def save_movies(data):
+    with open(KINOLAR_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 
 # /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-
-    is_subscribed = await check_subscription(user.id, context)
-
-    if not is_subscribed:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Obuna bo‘lish", url=f"https://t.me/{REQUIRED_CHANNEL[1:]}")],
-            [InlineKeyboardButton("🔄 Tekshirish", callback_data="check_subs")]
-        ])
-        await update.message.reply_text(
-            "👋 Botdan foydalanish uchun kanalga obuna bo‘ling:",
-            reply_markup=keyboard
-        )
-        return
-
-    await update.message.reply_text("🎬 Iltimos, kino kodini kiriting:")
-
-# Callback tugma tekshiruvi
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    is_subscribed = await check_subscription(user_id, context)
-
-    if is_subscribed:
-        await query.edit_message_text("✅ Obuna tasdiqlandi! Endi kino kodini kiriting.")
-    else:
-        await query.edit_message_text("❗ Siz hali kanalga obuna bo‘lmadingiz.")
-
-# Kino kodi asosida kino chiqarish
-async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    is_subscribed = await check_subscription(user_id, context)
+    if user_id == ADMIN_ID:
+        keyboard = [
+            [InlineKeyboardButton("🎥 Kino qo‘shish", callback_data="add_movie")],
+            [InlineKeyboardButton("📊 Statistika", callback_data="stats")],
+            [InlineKeyboardButton("📢 Kanal", url="https://t.me/YOURCHANNEL")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "Admin panelga xush kelibsiz:", reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text("🎬 Kino kodini yuboring (masalan, 101):")
 
-    if not is_subscribed:
-        await update.message.reply_text("❗ Avval kanalga obuna bo‘ling.")
+
+# Tugma bosilganda ishlaydigan funksiya
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    if user_id != ADMIN_ID:
+        await query.edit_message_text("Sizda ruxsat yo‘q.")
         return
 
-    code = update.message.text.strip()
+    if query.data == "add_movie":
+        await query.edit_message_text(
+            "Yangi kino qo‘shish uchun `kod|link` formatida yuboring.\n\nMasalan:\n101|https://t.me/yourchannel/123"
+        )
+        context.user_data["adding_movie"] = True
 
-    try:
-        with open("data.json", "r") as f:
-            data = json.load(f)
+    elif query.data == "stats":
+        movies = load_movies()
+        count = len(movies)
+        await query.edit_message_text(f"📊 Bazadagi kinolar soni: {count} ta")
 
-        if code in data:
-            kino = data[code]
+
+# Foydalanuvchilardan kelgan xabarlarni qabul qilish
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    movies = load_movies()
+
+    # Admin kino qo'shayotgan bo'lsa
+    if user_id == ADMIN_ID and context.user_data.get("adding_movie"):
+        try:
+            code, link = text.split("|")
+            code = code.strip()
+            link = link.strip()
+            movies[code] = link
+            save_movies(movies)
+            await update.message.reply_text(f"✅ Kino muvaffaqiyatli qo‘shildi: {code}")
+        except Exception:
             await update.message.reply_text(
-                f"🎬 <b>{kino['title']}</b>\n"
-                f"📝 {kino['description']}\n"
-                f"▶️ <a href='{kino['link']}'>Kinoni ko‘rish</a>",
-                parse_mode="HTML"
+                "❌ Format noto‘g‘ri. Iltimos, `kod|link` ko‘rinishida yuboring."
             )
-        else:
-            await update.message.reply_text("❌ Bunday kod mavjud emas.")
-    except Exception as e:
-        await update.message.reply_text("Xatolik yuz berdi.")
+        context.user_data["adding_movie"] = False
+        return
 
-# Botni ishga tushirish
-def main():
-    app = ApplicationBuilder().token("BOT_TOKENINGIZNI_BU_YERGA_QO‘YING").build()
+    # Oddiy foydalanuvchilar uchun kino kodi bo'yicha qidirish
+    if text in movies:
+        await update.message.reply_text(f"🎬 Kino topildi:\n{movies[text]}")
+    else:
+        await update.message.reply_text(
+            "❌ Bunday kod topilmadi. Iltimos, to‘g‘ri kod kiriting."
+        )
 
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        print("ERROR: BOT_TOKEN .env faylida yo'q!")
+        exit(1)
+
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code))
-    app.add_handler(MessageHandler(filters.COMMAND, start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, start))
-    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
-    app.add_handler(MessageHandler(filters.ALL, start))
-
-    app.add_handler(MessageHandler(filters.ALL, handle_code))
-
+    print("Bot ishga tushdi...")
     app.run_polling()
-
-if __name__ == '__main__':
-    main()
