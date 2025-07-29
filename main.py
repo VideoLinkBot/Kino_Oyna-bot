@@ -1,123 +1,167 @@
 import json
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-import os
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# Tokenni shu yerga yozing
-TOKEN = "8163580969:AAG3HoJAXJH9OeQQ79b51qPtQO75KHTZBZY"
+TOKEN = "YOUR_BOT_TOKEN"
+ADMIN_IDS = [123456789]  # o'z telegram ID'ingizni bu yerga yozing
 
-# Kino fayli
+# Fayl nomlari
 DATA_FILE = "data.json"
+CHANNELS_FILE = "required_channels.json"
+USERS_FILE = "users.json"
 
-# Statistika
-stats = {
-    "kino_soni": 0,
-    "qidiruvlar": 0,
-}
+# JSON faylni o'qish yoki yaratish
+def load_json(filename, default):
+    try:
+        with open(filename, 'r') as f:
+            return json.load(f)
+    except:
+        with open(filename, 'w') as f:
+            json.dump(default, f)
+        return default
 
+def save_json(filename, data):
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=2)
 
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return []
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+# Majburiy kanalga a'zolikni tekshirish
+async def check_subscribed(user_id, context):
+    channels = load_json(CHANNELS_FILE, [])
+    for ch in channels:
+        try:
+            member = await context.bot.get_chat_member(ch, user_id)
+            if member.status not in ['member', 'creator', 'administrator']:
+                return False
+        except:
+            return False
+    return True
 
-
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-
-def add_movie(code, title, url):
-    data = load_data()
-    data.append({"code": code, "title": title, "url": url})
-    save_data(data)
-    stats["kino_soni"] += 1
-
-
-def find_movie_by_code(code):
-    stats["qidiruvlar"] += 1
-    data = load_data()
-    for movie in data:
-        if movie["code"] == code:
-            return movie
-    return None
-
-
+# Start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("🎬 Kino qidirish", callback_data="search")],
-        [InlineKeyboardButton("➕ Kino qo'shish", callback_data="add")],
-        [InlineKeyboardButton("📊 Statistika", callback_data="stats")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Assalomu alaykum!\nQanday yordam bera olaman?", reply_markup=reply_markup)
+    user = update.effective_user
+    user_id = user.id
+    username = user.username or "foydalanuvchi"
 
+    # Foydalanuvchini bazaga yozish
+    users = load_json(USERS_FILE, [])
+    if user_id not in users:
+        users.append(user_id)
+        save_json(USERS_FILE, users)
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if user_id in ADMIN_IDS:
+        # Admin menyusi
+        buttons = [
+            [KeyboardButton("📥 Kino qo‘shish")],
+            [KeyboardButton("➕ Kanal qo‘shish")],
+            [KeyboardButton("📊 Statistika")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+        await update.message.reply_text(
+            "Admin panelga xush kelibsiz!", reply_markup=reply_markup
+        )
+    else:
+        # Oddiy foydalanuvchi
+        subscribed = await check_subscribed(user_id, context)
+        if not subscribed:
+            channels = load_json(CHANNELS_FILE, [])
+            btns = [[InlineKeyboardButton("➕ A'zo bo‘lish", url=f"https://t.me/{ch[1:]}")] for ch in channels]
+            btns.append([InlineKeyboardButton("✅ Tekshirish", callback_data="check_sub")])
+            markup = InlineKeyboardMarkup(btns)
+            await update.message.reply_text("Iltimos, quyidagi kanallarga a'zo bo‘ling:", reply_markup=markup)
+            return
+
+        await update.message.reply_text(f"Assalomu alaykum @{username}, botga xush kelibsiz!\n\n🎬 Kino kodini kiriting.")
+
+# Inline tugma uchun qayta tekshirish
+async def check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    if query.data == "search":
-        context.user_data["action"] = "search"
-        await query.message.reply_text("🔍 Kino kodini kiriting:")
-
-    elif query.data == "add":
-        context.user_data["action"] = "add_code"
-        await query.message.reply_text("🎬 Kino kodi kiriting:")
-
-    elif query.data == "stats":
-        msg = f"📊 Statistika:\n\n➕ Qo‘shilgan kinolar: {stats['kino_soni']}\n🔍 Qidiruvlar soni: {stats['qidiruvlar']}"
-        await query.message.reply_text(msg)
-
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    action = context.user_data.get("action")
-
-    if action == "search":
-        movie = find_movie_by_code(text)
-        if movie:
-            msg = f"🎬 Kino topildi:\n\nNomi: {movie['title']}\n📥 Havola: {movie['url']}"
-        else:
-            msg = "❌ Bu kodga mos kino topilmadi."
-        await update.message.reply_text(msg)
-
-    elif action == "add_code":
-        context.user_data["new_code"] = text
-        context.user_data["action"] = "add_title"
-        await update.message.reply_text("🎬 Kino nomini kiriting:")
-
-    elif action == "add_title":
-        context.user_data["new_title"] = text
-        context.user_data["action"] = "add_url"
-        await update.message.reply_text("📥 Kino havolasini kiriting:")
-
-    elif action == "add_url":
-        code = context.user_data.get("new_code")
-        title = context.user_data.get("new_title")
-        url = text
-        add_movie(code, title, url)
-        await update.message.reply_text("✅ Kino qo‘shildi!")
-        context.user_data.clear()
-
+    user_id = query.from_user.id
+    subscribed = await check_subscribed(user_id, context)
+    if subscribed:
+        await query.edit_message_text("✅ Tabriklayman! Endi kino kodini yuboring.")
     else:
-        await update.message.reply_text("Iltimos, quyidagi tugmalardan birini tanlang /start orqali.")
+        await query.edit_message_text("🚫 Hali ham a'zo emassiz.")
 
+# Kino kodini qayta ishlash
+async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in ADMIN_IDS:
+        return  # admin menyu tugmalari uchun boshqa handler bor
 
+    subscribed = await check_subscribed(user_id, context)
+    if not subscribed:
+        await update.message.reply_text("Iltimos, oldin kanalga a'zo bo‘ling.")
+        return
+
+    code = update.message.text.strip()
+    data = load_json(DATA_FILE, {})
+
+    if code in data:
+        await update.message.reply_text("🎬 Mana siz so‘ragan kino:")
+        await update.message.reply_document(document=data[code])
+    else:
+        await update.message.reply_text("❌ Bunday kodli kino topilmadi.")
+
+# Admin komandalar
+admin_state = {}
+
+async def handle_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    if user_id not in ADMIN_IDS:
+        return
+
+    if text == "📥 Kino qo‘shish":
+        admin_state[user_id] = "await_code"
+        await update.message.reply_text("🎬 Kino kodi nima bo‘lsin?")
+    elif text == "➕ Kanal qo‘shish":
+        admin_state[user_id] = "await_channel"
+        await update.message.reply_text("📣 Kanal username'ini yuboring (masalan: @kanalim)")
+    elif text == "📊 Statistika":
+        users = load_json(USERS_FILE, [])
+        await update.message.reply_text(f"👤 Foydalanuvchilar soni: {len(users)}")
+
+    elif user_id in admin_state:
+        state = admin_state[user_id]
+
+        if state == "await_code":
+            context.user_data["new_code"] = text
+            admin_state[user_id] = "await_file"
+            await update.message.reply_text("📎 Endi faylni yuboring:")
+        elif state == "await_file":
+            if update.message.document:
+                file_id = update.message.document.file_id
+                code = context.user_data.get("new_code")
+                data = load_json(DATA_FILE, {})
+                data[code] = file_id
+                save_json(DATA_FILE, data)
+                await update.message.reply_text(f"✅ '{code}' kodi bilan saqlandi.")
+                admin_state.pop(user_id)
+            else:
+                await update.message.reply_text("❌ Fayl yuboring.")
+        elif state == "await_channel":
+            channels = load_json(CHANNELS_FILE, [])
+            if text.startswith("@"):
+                if text not in channels:
+                    channels.append(text)
+                    save_json(CHANNELS_FILE, channels)
+                    await update.message.reply_text(f"✅ {text} kanal majburiyga qo‘shildi.")
+                else:
+                    await update.message.reply_text("❗ Bu kanal allaqachon mavjud.")
+            else:
+                await update.message.reply_text("❌ Kanal username @ bilan boshlanishi kerak.")
+            admin_state.pop(user_id)
+
+# Botni ishga tushurish
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(CallbackQueryHandler(check_callback, pattern="check_sub"))
+    app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), handle_admin))
+    app.add_handler(MessageHandler(filters.TEXT, handle_code))
 
-    print("Bot ishga tushdi...")
+    print("✅ Bot ishga tushdi!")
     app.run_polling()
