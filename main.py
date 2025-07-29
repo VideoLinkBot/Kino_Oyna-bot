@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_IDS = [123456789]  # o'z telegram ID'ingizni bu yerga yozing
+ADMIN_IDS = [6905227976]  # o'z telegram ID'ingizni bu yerga yozing
 
 # Fayl nomlari
 DATA_FILE = "data.json"
