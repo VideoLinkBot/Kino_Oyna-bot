@@ -1,15 +1,23 @@
 import json
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    ConversationHandler,
+)
 
 TOKEN = "8163580969:AAG3HoJAXJH9OeQQ79b51qPtQO75KHTZBZY"
 
-KANAL_NOMI, KANAL_IDSI = range(2)
+KANAL_NOMI, KANAL_IDSI, KINO_KODI = range(3)
 
-# Tugmalar
 asosiy_tugma = [["🎬 Kino qo‘shish", "📊 Statistika"], ["➕ Kanal qo‘shish"]]
 
-# JSONga yozish
+# Foydalanuvchi kinoni qo‘shmoqda degan belgini saqlaymiz
+KINO_FILE = "kinolar.json"
+
 def kanalni_saqlash(nomi, idsi):
     try:
         with open("data.json", "r") as f:
@@ -22,14 +30,34 @@ def kanalni_saqlash(nomi, idsi):
     with open("data.json", "w") as f:
         json.dump(data, f, indent=4)
 
-# /start buyrug‘i
+def kino_saqlash(kod, link):
+    try:
+        with open(KINO_FILE, "r") as f:
+            kinolar = json.load(f)
+    except FileNotFoundError:
+        kinolar = {}
+
+    kinolar[kod] = link
+
+    with open(KINO_FILE, "w") as f:
+        json.dump(kinolar, f, indent=4)
+
+def kino_soni():
+    try:
+        with open(KINO_FILE, "r") as f:
+            kinolar = json.load(f)
+        return len(kinolar)
+    except FileNotFoundError:
+        return 0
+
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Assalomu alaykum! Quyidagi tugmalardan birini tanlang:",
         reply_markup=ReplyKeyboardMarkup(asosiy_tugma, resize_keyboard=True)
     )
 
-# Tugma bosilganda
+# Tugmalarni boshqarish
 async def tugma_bosildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
@@ -38,43 +66,62 @@ async def tugma_bosildi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return KANAL_NOMI
 
     elif text == "🎬 Kino qo‘shish":
-        await update.message.reply_text("❗ Kino qo‘shish funksiyasi hozircha faollashtirilmagan.")
-        return ConversationHandler.END
+        await update.message.reply_text("Kino kodini kiriting (`kod|link`):")
+        return KINO_KODI
 
     elif text == "📊 Statistika":
-        await update.message.reply_text("❗ Statistika funksiyasi hozircha mavjud emas.")
+        soni = kino_soni()
+        await update.message.reply_text(f"📊 Bazada {soni} ta kino mavjud.")
         return ConversationHandler.END
 
     else:
-        await update.message.reply_text("Iltimos, menyudan tugmani tanlang.")
+        await update.message.reply_text("Iltimos, menyudagi tugmalardan foydalaning.")
         return ConversationHandler.END
 
-# Kanal nomi qabul qilish
+# Kanal nomi
 async def kanal_nomi_qabul(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["kanal_nomi"] = update.message.text
     await update.message.reply_text("Endi kanal ID raqamini kiriting:")
     return KANAL_IDSI
 
-# Kanal ID qabul qilish va saqlash
+# Kanal ID
 async def kanal_id_qabul(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kanal_idsi = update.message.text
     kanal_nomi = context.user_data["kanal_nomi"]
-
     kanalni_saqlash(kanal_nomi, kanal_idsi)
 
-    await update.message.reply_text(f"✅ Kanal muvaffaqiyatli qo‘shildi:\n📺 Nomi: {kanal_nomi}\n🆔 ID: {kanal_idsi}")
+    await update.message.reply_text(f"✅ Kanal qo‘shildi:\n📺 {kanal_nomi} — 🆔 {kanal_idsi}")
     return ConversationHandler.END
 
-# Cancel holati
+# Kino qo‘shish
+async def kino_qabul(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    matn = update.message.text
+    if "|" in matn:
+        kod, link = matn.split("|", 1)
+        kod = kod.strip()
+        link = link.strip()
+        kino_saqlash(kod, link)
+        await update.message.reply_text(f"✅ Kino qo‘shildi: {kod}")
+    else:
+        await update.message.reply_text("❌ Format noto‘g‘ri. Iltimos `kod|link` tarzida kiriting.")
+    return ConversationHandler.END
+
+# Cancel
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Bekor qilindi.")
     return ConversationHandler.END
 
-# Botni ishga tushirish
+# Main
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    kanal_qoshish = ConversationHandler(
+    kino_conversation = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🎬 Kino qo‘shish$"), tugma_bosildi)],
+        states={KINO_KODI: [MessageHandler(filters.TEXT & ~filters.COMMAND, kino_qabul)]},
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    kanal_conversation = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Kanal qo‘shish$"), tugma_bosildi)],
         states={
             KANAL_NOMI: [MessageHandler(filters.TEXT & ~filters.COMMAND, kanal_nomi_qabul)],
@@ -84,9 +131,11 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(kanal_qoshish)
+    app.add_handler(kino_conversation)
+    app.add_handler(kanal_conversation)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tugma_bosildi))
 
+    print("Bot ishga tushdi...")
     app.run_polling()
 
 if __name__ == "__main__":
