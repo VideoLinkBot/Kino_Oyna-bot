@@ -1,167 +1,122 @@
 import json
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+import os
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
 
-TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_IDS = [6905227976]  # o'z telegram ID'ingizni bu yerga yozing
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 
-# Fayl nomlari
 DATA_FILE = "data.json"
-CHANNELS_FILE = "required_channels.json"
-USERS_FILE = "users.json"
 
-# JSON faylni o'qish yoki yaratish
-def load_json(filename, default):
-    try:
-        with open(filename, 'r') as f:
-            return json.load(f)
-    except:
-        with open(filename, 'w') as f:
-            json.dump(default, f)
-        return default
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "w") as f:
+            json.dump({}, f)
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-def save_json(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=2)
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-# Majburiy kanalga a'zolikni tekshirish
-async def check_subscribed(user_id, context):
-    channels = load_json(CHANNELS_FILE, [])
-    for ch in channels:
-        try:
-            member = await context.bot.get_chat_member(ch, user_id)
-            if member.status not in ['member', 'creator', 'administrator']:
-                return False
-        except:
-            return False
-    return True
-
-# Start komandasi
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    username = user.username or "foydalanuvchi"
-
-    # Foydalanuvchini bazaga yozish
-    users = load_json(USERS_FILE, [])
-    if user_id not in users:
-        users.append(user_id)
-        save_json(USERS_FILE, users)
-
-    if user_id in ADMIN_IDS:
-        # Admin menyusi
-        buttons = [
-            [KeyboardButton("📥 Kino qo‘shish")],
-            [KeyboardButton("➕ Kanal qo‘shish")],
-            [KeyboardButton("📊 Statistika")]
-        ]
-        reply_markup = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-        await update.message.reply_text(
-            "Admin panelga xush kelibsiz!", reply_markup=reply_markup
-        )
-    else:
-        # Oddiy foydalanuvchi
-        subscribed = await check_subscribed(user_id, context)
-        if not subscribed:
-            channels = load_json(CHANNELS_FILE, [])
-            btns = [[InlineKeyboardButton("➕ A'zo bo‘lish", url=f"https://t.me/{ch[1:]}")] for ch in channels]
-            btns.append([InlineKeyboardButton("✅ Tekshirish", callback_data="check_sub")])
-            markup = InlineKeyboardMarkup(btns)
-            await update.message.reply_text("Iltimos, quyidagi kanallarga a'zo bo‘ling:", reply_markup=markup)
-            return
-
-        await update.message.reply_text(f"Assalomu alaykum @{username}, botga xush kelibsiz!\n\n🎬 Kino kodini kiriting.")
-
-# Inline tugma uchun qayta tekshirish
-async def check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    subscribed = await check_subscribed(user_id, context)
-    if subscribed:
-        await query.edit_message_text("✅ Tabriklayman! Endi kino kodini yuboring.")
-    else:
-        await query.edit_message_text("🚫 Hali ham a'zo emassiz.")
-
-# Kino kodini qayta ishlash
-async def handle_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if user_id in ADMIN_IDS:
-        return  # admin menyu tugmalari uchun boshqa handler bor
+    is_admin = user_id == ADMIN_ID
 
-    subscribed = await check_subscribed(user_id, context)
-    if not subscribed:
-        await update.message.reply_text("Iltimos, oldin kanalga a'zo bo‘ling.")
+    # Kanalga a'zo bo'lganini tekshirish
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        if member.status not in ["member", "creator", "administrator"]:
+            raise Exception("Not subscribed")
+    except:
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔔 Kanalga obuna bo‘lish", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]
+        ])
+        await update.message.reply_text("❗ Botdan foydalanish uchun avval kanalga obuna bo‘ling!", reply_markup=btn)
         return
 
-    code = update.message.text.strip()
-    data = load_json(DATA_FILE, {})
-
-    if code in data:
-        await update.message.reply_text("🎬 Mana siz so‘ragan kino:")
-        await update.message.reply_document(document=data[code])
+    # Tugmalar
+    if is_admin:
+        buttons = [
+            [InlineKeyboardButton("🎬 Kino qo‘shish", callback_data="add_movie")],
+            [InlineKeyboardButton("➕ Kanal qo‘shish", callback_data="add_channel")]
+        ]
     else:
-        await update.message.reply_text("❌ Bunday kodli kino topilmadi.")
+        buttons = []
 
-# Admin komandalar
-admin_state = {}
+    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+    await update.message.reply_text("🎟 Kino kodini kiriting:", reply_markup=reply_markup)
 
-async def handle_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_text(update: Update, context: CallbackContext):
+    text = update.message.text
+    data = load_data()
+    if text in data:
+        await update.message.reply_text(f"🎥 {data[text]}")
+    else:
+        await update.message.reply_text("🚫 Bunday kodli kino topilmadi.")
+
+async def handle_buttons(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    if user_id != ADMIN_ID:
+        await query.edit_message_text("❌ Siz admin emassiz.")
+        return
+
+    if query.data == "add_movie":
+        await query.edit_message_text("🎬 Kino kodini va linkini quyidagicha yuboring:\n\n`kod = link`", parse_mode="Markdown")
+        context.user_data["mode"] = "add_movie"
+    elif query.data == "add_channel":
+        await query.edit_message_text("➕ Kanal username'ni yuboring (masalan, `@yangi_kanal`):", parse_mode="Markdown")
+        context.user_data["mode"] = "add_channel"
+
+async def handle_admin_input(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    mode = context.user_data.get("mode")
     text = update.message.text
 
-    if user_id not in ADMIN_IDS:
-        return
+    if mode == "add_movie":
+        if "=" not in text:
+            await update.message.reply_text("❗ Format noto‘g‘ri. Quyidagicha bo‘lishi kerak:\n`kod = link`", parse_mode="Markdown")
+            return
+        code, link = [x.strip() for x in text.split("=", 1)]
+        data = load_data()
+        data[code] = link
+        save_data(data)
+        await update.message.reply_text(f"✅ Kino qo‘shildi:\n\n🎟 Kod: {code}\n🔗 Link: {link}")
+        context.user_data["mode"] = None
 
-    if text == "📥 Kino qo‘shish":
-        admin_state[user_id] = "await_code"
-        await update.message.reply_text("🎬 Kino kodi nima bo‘lsin?")
-    elif text == "➕ Kanal qo‘shish":
-        admin_state[user_id] = "await_channel"
-        await update.message.reply_text("📣 Kanal username'ini yuboring (masalan: @kanalim)")
-    elif text == "📊 Statistika":
-        users = load_json(USERS_FILE, [])
-        await update.message.reply_text(f"👤 Foydalanuvchilar soni: {len(users)}")
+    elif mode == "add_channel":
+        if not text.startswith("@"):
+            await update.message.reply_text("❗ Kanal username '@' bilan boshlanishi kerak.")
+            return
+        os.environ["CHANNEL_USERNAME"] = text
+        await update.message.reply_text(f"✅ Kanal yangilandi: {text}")
+        context.user_data["mode"] = None
 
-    elif user_id in admin_state:
-        state = admin_state[user_id]
-
-        if state == "await_code":
-            context.user_data["new_code"] = text
-            admin_state[user_id] = "await_file"
-            await update.message.reply_text("📎 Endi faylni yuboring:")
-        elif state == "await_file":
-            if update.message.document:
-                file_id = update.message.document.file_id
-                code = context.user_data.get("new_code")
-                data = load_json(DATA_FILE, {})
-                data[code] = file_id
-                save_json(DATA_FILE, data)
-                await update.message.reply_text(f"✅ '{code}' kodi bilan saqlandi.")
-                admin_state.pop(user_id)
-            else:
-                await update.message.reply_text("❌ Fayl yuboring.")
-        elif state == "await_channel":
-            channels = load_json(CHANNELS_FILE, [])
-            if text.startswith("@"):
-                if text not in channels:
-                    channels.append(text)
-                    save_json(CHANNELS_FILE, channels)
-                    await update.message.reply_text(f"✅ {text} kanal majburiyga qo‘shildi.")
-                else:
-                    await update.message.reply_text("❗ Bu kanal allaqachon mavjud.")
-            else:
-                await update.message.reply_text("❌ Kanal username @ bilan boshlanishi kerak.")
-            admin_state.pop(user_id)
-
-# Botni ishga tushurish
-if __name__ == "__main__":
-    app = Application.builder().token(TOKEN).build()
-
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(check_callback, pattern="check_sub"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_IDS), handle_admin))
-    app.add_handler(MessageHandler(filters.TEXT, handle_code))
+    app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), handle_admin_input))
+    app.add_handler(MessageHandler(filters.TEXT, handle_text))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, lambda u, c: None))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, lambda u, c: None))
+    app.add_handler(MessageHandler(filters.ALL, lambda u, c: None))
+    app.add_handler(MessageHandler(filters.COMMAND, lambda u, c: None))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.ALL, lambda u, c: None))
+    app.add_handler(MessageHandler(filters.StatusUpdate.CHAT_MEMBER, lambda u, c: None))
+    app.add_handler(MessageHandler(filters.UpdateType.CALLBACK_QUERY, handle_buttons))
 
-    print("✅ Bot ishga tushdi!")
+    print("Bot ishga tushdi...")
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
