@@ -5,7 +5,7 @@ import json
 import os
 
 TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_IDS = [690522797]  # o‘zingizning Telegram IDingizni yozing
+ADMIN_IDS = [6905227976]  # o‘zingizning Telegram IDingizni yozing
 
 # Fayllar
 USERS_FILE = "users.json"
