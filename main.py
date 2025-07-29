@@ -1,159 +1,163 @@
-import logging
-import json
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import json
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
-from telegram.error import BadRequest
-
-# 🔐 Admin Telegram ID
-ADMIN_ID = 6905227976
-
-# 📢 Obuna shart bo‘lgan kanallar
-obuna_kanallari = [
-    "YOURCHANNEL1",  # Faqat username, masalan: "Kino_Oyna1080p"
-    "YOURCHANNEL2",
-]
-
-# 📁 Kino bazasi
-KINOLAR_FILE = "kinolar.json"
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters
 )
 
-# 🎬 Kino yuklash
-def load_movies():
-    if os.path.exists(KINOLAR_FILE):
-        with open(KINOLAR_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+# .env fayldan ma’lumotlarni yuklash
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+CHANNELS = json.loads(os.getenv("CHANNELS_JSON"))  # ["@kanal1", "@kanal2"]
 
-# 💾 Kino saqlash
-def save_movies(data):
-    with open(KINOLAR_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+DATA_FILE = "data.json"
+USERS_FILE = "users.json"
 
-# 📛 Obuna tekshiruvchi
-async def check_subscription(user_id, context):
-    for channel in obuna_kanallari:
-        try:
-            member = await context.bot.get_chat_member(f"@{channel}", user_id)
-            if member.status not in ["member", "administrator", "creator"]:
-                return False
-        except BadRequest:
+# Foydalanuvchi ID larni saqlash
+def add_user(user_id: int):
+    users = []
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            users = json.load(f)
+    if user_id not in users:
+        users.append(user_id)
+        with open(USERS_FILE, "w") as f:
+            json.dump(users, f)
+
+# Obuna tekshiruvi
+async def check_subs(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    for ch in CHANNELS:
+        member = await context.bot.get_chat_member(ch, user_id)
+        if member.status in ["left", "kicked"]:
             return False
     return True
 
-# ▶️ /start
+# Obuna bo‘lmaganlarga tugma yuborish
+async def force_subscribe(update: Update):
+    buttons = [
+        [InlineKeyboardButton("✅ Obuna bo‘lish", url=f"https://t.me/{ch[1:]}")]
+        for ch in CHANNELS
+    ]
+    buttons.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_subs")])
+    await update.message.reply_text("Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:", reply_markup=InlineKeyboardMarkup(buttons))
+
+# /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    add_user(user_id)
+    if await check_subs(user_id, context):
+        await update.message.reply_text("🎬 Kod kiriting (masalan: 100)")
+    else:
+        await force_subscribe(update)
 
-    if not await check_subscription(user_id, context):
-        keyboard = [
-            [InlineKeyboardButton("📢 Obuna bo‘lish", url=f"https://t.me/{obuna_kanallari[0]}")],
-            [InlineKeyboardButton("✅ Tekshirish", callback_data="check_subs")],
-        ]
-        await update.message.reply_text(
-            "❗ Botdan foydalanish uchun kanalga obuna bo‘ling.", reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+# Kod orqali kino yuborish
+async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await check_subs(user_id, context):
+        await force_subscribe(update)
         return
 
-    if user_id == ADMIN_ID:
-        keyboard = [
-            [InlineKeyboardButton("🎥 Kino qo‘shish", callback_data="add_movie")],
-            [InlineKeyboardButton("📊 Statistika", callback_data="stats")],
-        ]
-        await update.message.reply_text("Admin panelga xush kelibsiz:", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.message.reply_text("🎬 Kino kodini yuboring (masalan, 101):")
+    code = update.message.text.strip()
+    if not code.isdigit():
+        await update.message.reply_text("❗️Faqat raqamli kod kiriting.")
+        return
 
-# 🔁 Tugma (callback)lar
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not os.path.exists(DATA_FILE):
+        await update.message.reply_text("📂 Hech qanday kino mavjud emas.")
+        return
+
+    with open(DATA_FILE, "r") as f:
+        data = json.load(f)
+
+    if code not in data:
+        await update.message.reply_text("❌ Bu kod bo‘yicha kino topilmadi.")
+        return
+
+    channel_username = data[code]["channel"]
+    message_id = data[code]["message_id"]
+
+    try:
+        await context.bot.copy_message(
+            chat_id=user_id,
+            from_chat_id=channel_username,
+            message_id=message_id
+        )
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Xatolik: {e}")
+
+# Admin: kino qo‘shish
+async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    args = context.args
+    if len(args) != 3:
+        await update.message.reply_text("Foydalanish: /add <kod> <kanal_username> <message_id>")
+        return
+
+    code, channel, msg_id = args
+    if not msg_id.isdigit():
+        await update.message.reply_text("❗️Message ID raqam bo‘lishi kerak.")
+        return
+
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+    else:
+        data = {}
+
+    data[code] = {"channel": channel, "message_id": int(msg_id)}
+
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
+    await update.message.reply_text(f"✅ Kino kod {code} bilan qo‘shildi.")
+
+# Admin: statistika
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    users = []
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            users = json.load(f)
+
+    data = {}
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+
+    await update.message.reply_text(f"📊 Statistika:\n👤 Foydalanuvchilar: {len(users)}\n🎬 Kinolar: {len(data)}")
+
+# Obuna qayta tekshirish
+async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
-
-    if query.data == "check_subs":
-        if await check_subscription(user_id, context):
-            await query.edit_message_text("✅ Rahmat! Endi kino kodini yuboring.")
-        else:
-            await query.edit_message_text("❗ Hali ham obuna bo‘lmagansiz.")
-        return
-
-    if user_id != ADMIN_ID:
-        await query.edit_message_text("Sizda ruxsat yo‘q.")
-        return
-
-    if query.data == "add_movie":
-        await query.edit_message_text(
-            "Yangi kino qo‘shish uchun `kod|link` formatida yuboring.\n\nMasalan:\n101|https://t.me/yourchannel/123"
-        )
-        context.user_data["adding_movie"] = True
-
-    elif query.data == "stats":
-        movies = load_movies()
-        count = len(movies)
-        await query.edit_message_text(f"📊 Bazadagi kinolar soni: {count} ta")
-
-# 💬 Kino kodi yoki admindan kino qo‘shish
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text.strip()
-
-    if not await check_subscription(user_id, context):
-        keyboard = [
-            [InlineKeyboardButton("📢 Obuna bo‘lish", url=f"https://t.me/{obuna_kanallari[0]}")],
-            [InlineKeyboardButton("✅ Tekshirish", callback_data="check_subs")],
-        ]
-        await update.message.reply_text(
-            "❗ Iltimos, botdan foydalanish uchun avval kanalga obuna bo‘ling.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-        return
-
-    movies = load_movies()
-
-    # Admin kino qo‘shyapti
-    if user_id == ADMIN_ID and context.user_data.get("adding_movie"):
-        try:
-            code, link = text.split("|")
-            code = code.strip()
-            link = link.strip()
-            movies[code] = link
-            save_movies(movies)
-            await update.message.reply_text(f"✅ Kino muvaffaqiyatli qo‘shildi: {code}")
-        except Exception:
-            await update.message.reply_text("❌ Format noto‘g‘ri. `kod|link` bo‘lishi kerak.")
-        context.user_data["adding_movie"] = False
-        return
-
-    # Oddiy foydalanuvchi kod yubordi
-    if text in movies:
-        await update.message.reply_text(f"🎬 Kino topildi:\n{movies[text]}")
+    if await check_subs(user_id, context):
+        await query.message.delete()
+        await query.message.reply_text("✅ Obuna tasdiqlandi. Endi kod kiriting.")
     else:
-        await update.message.reply_text("❌ Bunday kod topilmadi. To‘g‘ri kod yuboring.")
+        await query.message.reply_text("🚫 Hali ham obuna bo‘lmagansiz.")
 
-# 🚀 Botni ishga tushirish
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-    TOKEN = os.getenv("BOT_TOKEN")
+# Main
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    if not TOKEN:
-        print("ERROR: BOT_TOKEN .env faylida yo‘q!")
-        exit(1)
-
-    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(CommandHandler("add", add_movie))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CallbackQueryHandler(check_button, pattern="check_subs"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_movie))
 
-    print("✅ Bot ishga tushdi...")
+    print("🤖 Bot ishga tushdi...")
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
