@@ -1,18 +1,15 @@
 import os
 import json
-from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
 )
 
-# .env fayldan ma’lumotlarni yuklash
-load_dotenv()
+# Environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-CHANNELS = json.loads(os.getenv("CHANNELS_JSON"))  # ["@kanal1", "@kanal2"]
-
+CHANNELS = json.loads(os.getenv("CHANNELS_JSON", "[]"))  # ["@kanal1", "@kanal2"]
 DATA_FILE = "data.json"
 USERS_FILE = "users.json"
 
@@ -30,8 +27,11 @@ def add_user(user_id: int):
 # Obuna tekshiruvi
 async def check_subs(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     for ch in CHANNELS:
-        member = await context.bot.get_chat_member(ch, user_id)
-        if member.status in ["left", "kicked"]:
+        try:
+            member = await context.bot.get_chat_member(ch, user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except:
             return False
     return True
 
@@ -42,7 +42,10 @@ async def force_subscribe(update: Update):
         for ch in CHANNELS
     ]
     buttons.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_subs")])
-    await update.message.reply_text("Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:", reply_markup=InlineKeyboardMarkup(buttons))
+    await update.message.reply_text(
+        "Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:", 
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
 
 # /start komandasi
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,7 +160,15 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_movie))
 
     print("🤖 Bot ishga tushdi...")
-    app.run_polling()
+
+    # Webhook sozlamalari Render.com uchun
+    PORT = int(os.environ.get("PORT", "8443"))
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://<SIZNING-RENDER-URL>.onrender.com/{BOT_TOKEN}"
+    )
 
 if __name__ == "__main__":
     main()
