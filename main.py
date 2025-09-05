@@ -8,12 +8,12 @@ from telegram.ext import (
 
 # Environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 CHANNELS = json.loads(os.getenv("CHANNELS_JSON", "[]"))  # ["@kanal1", "@kanal2"]
 DATA_FILE = "data.json"
 USERS_FILE = "users.json"
 
-# Foydalanuvchi ID larni saqlash
+
 def add_user(user_id: int):
     users = []
     if os.path.exists(USERS_FILE):
@@ -24,7 +24,7 @@ def add_user(user_id: int):
         with open(USERS_FILE, "w") as f:
             json.dump(users, f)
 
-# Obuna tekshiruvi
+
 async def check_subs(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     for ch in CHANNELS:
         try:
@@ -35,7 +35,7 @@ async def check_subs(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
             return False
     return True
 
-# Obuna bo‘lmaganlarga tugma yuborish
+
 async def force_subscribe(update: Update):
     buttons = [
         [InlineKeyboardButton("✅ Obuna bo‘lish", url=f"https://t.me/{ch[1:]}")]
@@ -43,11 +43,11 @@ async def force_subscribe(update: Update):
     ]
     buttons.append([InlineKeyboardButton("Tekshirish ✅", callback_data="check_subs")])
     await update.message.reply_text(
-        "Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:", 
+        "Botdan foydalanish uchun quyidagi kanallarga obuna bo‘ling:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
-# /start komandasi
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     add_user(user_id)
@@ -56,7 +56,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await force_subscribe(update)
 
-# Kod orqali kino yuborish
+
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await check_subs(user_id, context):
@@ -91,7 +91,7 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Xatolik: {e}")
 
-# Admin: kino qo‘shish
+
 async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -120,7 +120,7 @@ async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ Kino kod {code} bilan qo‘shildi.")
 
-# Admin: statistika
+
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
@@ -138,7 +138,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"📊 Statistika:\n👤 Foydalanuvchilar: {len(users)}\n🎬 Kinolar: {len(data)}")
 
-# Obuna qayta tekshirish
+
 async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -149,7 +149,7 @@ async def check_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.message.reply_text("🚫 Hali ham obuna bo‘lmagansiz.")
 
-# Main
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -161,14 +161,18 @@ def main():
 
     print("🤖 Bot ishga tushdi...")
 
-    # Webhook sozlamalari Render.com uchun
     PORT = int(os.environ.get("PORT", "8443"))
+    RENDER_URL = os.environ.get("RENDER_URL")  # <-- Render env ga qo‘shasan
+    if not RENDER_URL:
+        raise RuntimeError("RENDER_URL env var kerak, masalan: https://kino-bot.onrender.com")
+
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=BOT_TOKEN,
-        webhook_url=f"https://kino-bot.onrender.com/{BOT_TOKEN}"
+        webhook_url=f"{RENDER_URL}/{BOT_TOKEN}"
     )
+
 
 if __name__ == "__main__":
     main()
