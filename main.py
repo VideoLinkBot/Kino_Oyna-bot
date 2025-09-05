@@ -111,6 +111,7 @@ def main():
     PORT = int(os.environ.get("PORT", "8443"))
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Handlerlar
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_movie))
     app.add_handler(CallbackQueryHandler(check_button, pattern="check_sub"))
